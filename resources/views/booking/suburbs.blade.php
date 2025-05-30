@@ -21,6 +21,7 @@
                         <div class="step {{ $i === 0 ? 'active' : '' }}">
                             <div class="step-number">
                                 <i class="fas fa-{{ $step[1] }}"></i>
+                                <span class="step-count">{{ $i + 1 }}</span>
                             </div>
                             <div class="step-title">{{ $step[0] }}</div>
                         </div>
@@ -119,6 +120,31 @@
     font-size: 0.9rem;
     border: 2px solid transparent;
     transition: all 0.3s ease;
+}
+
+.step-count {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background: var(--primary-light);
+    color: var(--primary);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    border: 2px solid var(--white);
+}
+
+.step.active .step-count {
+    background: var(--primary);
+    color: var(--white);
+}
+.step-number {
+    position: relative;
 }
 
 .step.active .step-number {

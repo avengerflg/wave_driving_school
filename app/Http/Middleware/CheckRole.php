@@ -30,21 +30,42 @@ class CheckRole
             : $roles;
 
         // Check if user has any of the required roles
-        if (!in_array($user->role, $roles)) {
-            // If user is already logged in but doesn't have permission
-            $redirect = match($user->role) {
-                'admin' => redirect()->route('admin.dashboard'),
-                'instructor' => redirect()->route('instructor.dashboard'),
-                'user' => redirect()->route('client.bookings.index'),
-                default => redirect()->route('home')
-            };
-            
-            return $redirect->with('error', 'You do not have permission to access this page.');
+        if (in_array($user->role, $roles)) {
+            // User has the required role, continue
+            $request->merge(['current_role' => $user->role]);
+            return $next($request);
         }
 
-        // Add role to request for use in controllers/views
-        $request->merge(['current_role' => $user->role]);
+        // User doesn't have the required role, redirect to their appropriate dashboard
+        // BUT only if they're not already trying to access their own dashboard
+        $currentRoute = $request->route()->getName();
+        
+        switch($user->role) {
+            case 'admin':
+                if (!str_starts_with($currentRoute, 'admin.')) {
+                    return redirect()->route('admin.dashboard')
+                        ->with('error', 'You do not have permission to access this page.');
+                }
+                break;
+            case 'instructor':
+                if (!str_starts_with($currentRoute, 'instructor.')) {
+                    return redirect()->route('instructor.dashboard')
+                        ->with('error', 'You do not have permission to access this page.');
+                }
+                break;
+            case 'student':
+                if (!str_starts_with($currentRoute, 'client.')) {
+                    return redirect()->route('client.dashboard')
+                        ->with('error', 'You do not have permission to access this page.');
+                }
+                break;
+            default:
+                return redirect()->route('home')
+                    ->with('error', 'Invalid user role.');
+        }
 
-        return $next($request);
+        // If we reach here, user is trying to access their own dashboard but doesn't have permission
+        // This shouldn't happen in normal circumstances
+        abort(403, 'Access denied');
     }
 }

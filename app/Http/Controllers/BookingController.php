@@ -9,6 +9,10 @@ use App\Models\Service;
 use App\Models\Availability;
 use App\Models\Booking;
 use App\Models\Payment;
+use App\Notifications\BookingConfirmation;
+use App\Notifications\BookingReminderOneDay;
+use App\Notifications\BookingReminderTwoDays;
+use App\Notifications\NewBookingReceived;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -105,85 +109,201 @@ class BookingController extends Controller
      * Display instructor availability
      */
     public function availability($instructor, Request $request)
-    {
-        $instructor = Instructor::with('user')->findOrFail($instructor);
-        
-        // Handle week navigation
-        $startDate = Carbon::parse($request->get('week_start', Carbon::today()));
-        if ($request->get('direction') === 'prev') {
-            $startDate->subWeek();
-        } elseif ($request->get('direction') === 'next') {
-            $startDate->addWeek();
+{
+    $instructor = Instructor::with('user')->findOrFail($instructor);
+
+    // Handle week navigation - fix the date parsing
+    $weekStart = $request->get('week_start');
+    if ($weekStart) {
+        try {
+            $startDate = Carbon::createFromFormat('Y-m-d', $weekStart)->startOfDay();
+        } catch (\Exception $e) {
+            $startDate = Carbon::today()->startOfWeek();
         }
-        
-        $endDate = $startDate->copy()->addDays(6);
-        
-        // Get availability slots
-        $availabilitySlots = Availability::where('instructor_id', $instructor->id)
-            ->whereBetween('date', [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')])
-            ->where('is_available', true)
-            ->orderBy('date')
-            ->orderBy('start_time')
-            ->get()
-            ->groupBy(function($slot) {
-                return Carbon::parse($slot->date)->format('Y-m-d');
-            });
-
-        // Get existing bookings
-        $existingBookings = Booking::where('instructor_id', $instructor->id)
-            ->whereBetween('date', [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')])
-            ->get()
-            ->groupBy(function($booking) {
-                return Carbon::parse($booking->date)->format('Y-m-d');
-            });
-
-        return view('booking.availability', compact(
-            'instructor', 
-            'availabilitySlots', 
-            'existingBookings', 
-            'startDate', 
-            'endDate'
-        ));
+    } else {
+        $startDate = Carbon::today()->startOfWeek();
     }
+    
+    if ($request->get('direction') === 'prev') {
+        $startDate->subWeek();
+    } elseif ($request->get('direction') === 'next') {
+        $startDate->addWeek();
+    }
+    
+    $endDate = $startDate->copy()->addDays(6);
+
+    // Get availability slots - FIX: Use whereDate for proper date comparison
+    $availabilitySlots = Availability::where('instructor_id', $instructor->id)
+        ->whereDate('date', '>=', $startDate->format('Y-m-d'))
+        ->whereDate('date', '<=', $endDate->format('Y-m-d'))
+        ->where('is_available', true)
+        ->orderBy('date')
+        ->orderBy('start_time')
+        ->get()
+        ->groupBy(function($slot) {
+            return Carbon::parse($slot->date)->format('Y-m-d');
+        });
+
+    // Get existing bookings - FIX: Use whereDate and handle time format properly
+    $existingBookings = Booking::where('instructor_id', $instructor->id)
+        ->whereDate('date', '>=', $startDate->format('Y-m-d'))
+        ->whereDate('date', '<=', $endDate->format('Y-m-d'))
+        ->whereIn('status', ['confirmed', 'pending'])
+        ->get()
+        ->groupBy(function($booking) {
+            return Carbon::parse($booking->date)->format('Y-m-d');
+        });
+
+    // Get services
+    $services = Service::where('active', true)->orderBy('name')->get();
+    
+    // Generate time slots
+    $timeSlots = [];
+    $startTime = Carbon::createFromTimeString('06:30');
+    $endTime = Carbon::createFromTimeString('18:00');
+    
+    while ($startTime < $endTime) {
+        $slotEndTime = $startTime->copy()->addMinutes(15);
+        $timeSlots[] = [
+            'start' => $startTime->format('H:i'),
+            'label' => $startTime->format('H:i') . ' - ' . $slotEndTime->format('H:i'),
+        ];
+        $startTime->addMinutes(15);
+    }
+
+    return view('booking.availability', compact(
+        'instructor',
+        'availabilitySlots',
+        'existingBookings',
+        'startDate',
+        'endDate',
+        'services',
+        'timeSlots'
+    ));
+}
 
     /**
      * Handle time slot selection
      */
     public function selectTime(Request $request)
-    {
-        $validated = $request->validate([
-            'availability_id' => 'required|exists:availabilities,id', // <-- changed here
-        ]);
-        
-        $availability = \App\Models\Availability::findOrFail($validated['availability_id']);
-        
-        if (!$this->isSlotAvailable($availability)) {
-            return back()->with('error', 'This time slot is no longer available. Please select another time.');
-        }
-        
-        $this->lockSlot($availability);
-        
-        Session::put([
-            'booking.date' => $availability->date,
-            'booking.start_time' => $availability->start_time,
-            'booking.end_time' => $availability->end_time,
-            'booking.slot_locked_until' => now()->addMinutes(15)
-        ]);
-        
-        return redirect()->route('booking.services');
+{
+    $validated = $request->validate([
+        'date' => 'required|date',
+        'start_time' => 'required|regex:/^\d{2}:\d{2}$/',
+        'end_time' => 'required|regex:/^\d{2}:\d{2}$/',
+        'service_id' => 'required|exists:services,id',
+    ]);
+    
+    $instructorId = Session::get('booking.instructor_id');
+    if (!$instructorId) {
+        return redirect()->route('booking.index')->with('error', 'Please start the booking process from the beginning.');
     }
+    
+    // Store the service selection (from availability page)
+    Session::put('booking.service_id', $validated['service_id']);
+    
+    // Parse times properly
+    $date = $validated['date'];
+    $startTime = Carbon::createFromFormat('H:i', $validated['start_time']);
+    $endTime = Carbon::createFromFormat('H:i', $validated['end_time']);
+    
+    // Check availability in 15-minute increments
+    $current = $startTime->copy();
+    $allSlotsAvailable = true;
+    $unavailableSlots = [];
+    
+    while ($current < $endTime) {
+        $slotEnd = $current->copy()->addMinutes(15);
+        
+        // FIX: Use whereDate and whereTime for proper comparison
+        $available = Availability::where('instructor_id', $instructorId)
+            ->whereDate('date', $date)
+            ->whereTime('start_time', $current->format('H:i:s'))
+            ->where('is_available', true)
+            ->exists();
+            
+        if (!$available) {
+            $allSlotsAvailable = false;
+            $unavailableSlots[] = $current->format('H:i');
+        }
+        $current = $slotEnd;
+    }
+    
+    if (!$allSlotsAvailable) {
+        $slotsText = implode(', ', $unavailableSlots);
+        return back()->with('error', "The following time slots are not available: {$slotsText}. Please select another time.");
+    }
+    
+    // Check for existing bookings that would conflict
+    $hasConflict = Booking::where('instructor_id', $instructorId)
+        ->whereDate('date', $date) // FIX: Use whereDate
+        ->whereIn('status', ['confirmed', 'pending'])
+        ->where(function($query) use ($validated) {
+            $query->where(function($q) use ($validated) {
+                $q->whereTime('start_time', '<', $validated['end_time'] . ':00')
+                  ->whereTime('end_time', '>', $validated['start_time'] . ':00');
+            });
+        })
+        ->exists();
+        
+    if ($hasConflict) {
+        return back()->with('error', 'This time slot conflicts with an existing booking.');
+    }
+    
+    // Check buffer time conflicts (30 minutes before/after)
+    $bufferStartTime = $startTime->copy()->subMinutes(30);
+    $bufferEndTime = $endTime->copy()->addMinutes(30);
+    
+    $hasBufferConflict = Booking::where('instructor_id', $instructorId)
+        ->whereDate('date', $date) // FIX: Use whereDate
+        ->whereIn('status', ['confirmed', 'pending'])
+        ->where(function($query) use ($bufferStartTime, $bufferEndTime, $startTime, $endTime) {
+            $query->where(function($q) use ($bufferStartTime, $startTime) {
+                $q->whereTime('end_time', '>', $bufferStartTime->format('H:i:s'))
+                  ->whereTime('end_time', '<=', $startTime->format('H:i:s'));
+            })
+            ->orWhere(function($q) use ($bufferEndTime, $endTime) {
+                $q->whereTime('start_time', '>=', $endTime->format('H:i:s'))
+                  ->whereTime('start_time', '<', $bufferEndTime->format('H:i:s'));
+            });
+        })
+        ->exists();
+        
+    if ($hasBufferConflict) {
+        return back()->with('error', 'This time slot conflicts with the 30-minute buffer required between lessons. Please select a different time.');
+    }
+    
+    // Lock the slots and store session data
+    Session::put([
+        'booking.date' => $date,
+        'booking.start_time' => $validated['start_time'],
+        'booking.end_time' => $validated['end_time'],
+        'booking.slot_locked_until' => now()->addMinutes(15)->toDateTimeString(),
+        'booking.booking_for' => 'self'
+    ]);
+    
+    // Go directly to details (skip services)
+    return redirect()->route('booking.details');
+}
 
     /**
      * Display available services
      */
     public function services()
     {
+        // Check if we already have a service selected
+        if (Session::has('booking.service_id')) {
+            // Service already selected, proceed to details
+            return redirect()->route('booking.details');
+        }
+        
         if (!$this->checkSlotLock()) {
             return redirect()->route('booking.availability', Session::get('booking.instructor_id'))
                 ->with('error', 'Your selected time slot has expired. Please choose another time.');
         }
 
         $services = Service::where('active', true)->get();
+        
         return view('booking.services', compact('services'));
     }
 
@@ -211,11 +331,14 @@ class BookingController extends Controller
     public function details()
     {
         if (!Session::has('booking.service_id') || !$this->checkSlotLock()) {
-            return redirect()->route('booking.index');
+            return redirect()->route('booking.index')
+                ->with('error', 'Your session has expired. Please start the booking process again.');
         }
         
         $suburbs = Suburb::where('active', true)->orderBy('name')->get();
-        return view('booking.details', compact('suburbs'));
+        $bookingFor = Session::get('booking.booking_for', 'self');
+        
+        return view('booking.details', compact('suburbs', 'bookingFor'));
     }
 
     /**
@@ -261,7 +384,8 @@ class BookingController extends Controller
     public function payment()
     {
         if (!Session::has('booking.service_id') || !Auth::check() || !$this->checkSlotLock()) {
-            return redirect()->route('booking.index');
+            return redirect()->route('booking.index')
+                ->with('error', 'Your session has expired. Please start the booking process again.');
         }
         
         $bookingData = $this->getBookingData();
@@ -294,7 +418,7 @@ class BookingController extends Controller
             $this->clearBookingSession();
             Session::put('booking.completed_id', $booking->id);
 
-            return redirect()->route('booking.confirmation');
+            return redirect()->route('booking.confirmation', $booking->id);
 
         } catch (\Exception $e) {
             DB::rollBack();
@@ -306,16 +430,26 @@ class BookingController extends Controller
     /**
      * Display booking confirmation
      */
-    public function confirmation()
+    public function confirmation($bookingId = null)
     {
-        $bookingId = Session::get('booking.completed_id');
+        // Try to get booking ID from parameter or session
+        if (!$bookingId) {
+            $bookingId = Session::get('booking.completed_id');
+        }
         
         if (!$bookingId) {
-            return redirect()->route('booking.index');
+            return redirect()->route('booking.index')
+                ->with('error', 'No booking found.');
         }
         
         $booking = Booking::with(['user', 'instructor.user', 'service', 'suburb', 'payment'])
             ->findOrFail($bookingId);
+        
+        // Verify the booking belongs to the current user
+        if ($booking->user_id !== Auth::id()) {
+            return redirect()->route('booking.index')
+                ->with('error', 'Unauthorized access.');
+        }
         
         Session::forget('booking.completed_id');
         
@@ -325,34 +459,18 @@ class BookingController extends Controller
     /**
      * Helper Methods
      */
-    protected function isSlotAvailable($availability)
-    {
-        if (!$availability->is_available) {
-            return false;
-        }
-
-        return !Booking::where('instructor_id', $availability->instructor_id)
-            ->where('date', $availability->date)
-            ->where(function($query) use ($availability) {
-                $query->whereBetween('start_time', [$availability->start_time, $availability->end_time])
-                    ->orWhereBetween('end_time', [$availability->start_time, $availability->end_time]);
-            })
-            ->exists();
-    }
-
-    protected function lockSlot($availability)
-    {
-        Cache::put(
-            "slot_lock:{$availability->id}", 
-            Auth::id(), 
-            now()->addMinutes(15)
-        );
-    }
-
     protected function checkSlotLock()
     {
-        return Session::has('booking.slot_locked_until') && 
-               now()->lt(Carbon::parse(Session::get('booking.slot_locked_until')));
+        if (!Session::has('booking.slot_locked_until')) {
+            return false;
+        }
+        
+        try {
+            $lockUntil = Carbon::parse(Session::get('booking.slot_locked_until'));
+            return now()->lt($lockUntil);
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 
     protected function getBookingData()
@@ -373,56 +491,119 @@ class BookingController extends Controller
     }
 
     protected function createBooking()
-    {
-        $booking = new Booking();
-        $booking->fill([
-            'user_id' => Auth::id(),
-            'instructor_id' => Session::get('booking.instructor_id'),
-            'service_id' => Session::get('booking.service_id'),
-            'suburb_id' => Session::get('booking.suburb_id'),
-            'date' => Session::get('booking.date'),
-            'start_time' => Session::get('booking.start_time'),
-            'end_time' => Session::get('booking.end_time'),
-            'status' => 'pending',
-            'booking_for' => Session::get('booking.booking_for'),
-            'other_name' => Session::get('booking.other_name'),
-            'other_email' => Session::get('booking.other_email'),
-            'other_phone' => Session::get('booking.other_phone'),
-            'address' => Session::get('booking.address'),
-        ]);
-        $booking->save();
-        
-        return $booking;
-    }
+{
+    $booking = new Booking();
+    $booking->fill([
+        'user_id' => Auth::id(),
+        'instructor_id' => Session::get('booking.instructor_id'),
+        'service_id' => Session::get('booking.service_id'),
+        'suburb_id' => Session::get('booking.suburb_id'),
+        'date' => Session::get('booking.date'),
+        // Always store as H:i:s, regardless of input format
+        'start_time' => Carbon::parse(Session::get('booking.start_time'))->format('H:i:s'),
+        'end_time' => Carbon::parse(Session::get('booking.end_time'))->format('H:i:s'),
+        'status' => 'pending',
+        'booking_for' => Session::get('booking.booking_for', 'self'),
+        'other_name' => Session::get('booking.other_name'),
+        'other_email' => Session::get('booking.other_email'),
+        'other_phone' => Session::get('booking.other_phone'),
+        'address' => Session::get('booking.address'),
+    ]);
+    $booking->save();
+
+    return $booking;
+}
 
     protected function processPaymentTransaction($booking, $validated)
-    {
-        // Add your payment gateway integration here
-        $payment = new Payment();
-        $payment->booking_id = $booking->id;
-        $payment->user_id = Auth::id();
-        $payment->amount = Service::find(Session::get('booking.service_id'))->price;
-        $payment->payment_method = $validated['payment_method'];
-        $payment->transaction_id = 'TRANS-' . time();
-        $payment->status = 'completed';
-        $payment->save();
-        
-        return $payment;
-    }
+{
+    $service = Service::find($booking->service_id);
+    
+    // Generate invoice first
+    $invoiceService = new \App\Services\InvoiceService();
+    $invoice = $invoiceService->generateInvoiceForBooking($booking);
+    
+    // Create payment
+    $payment = new Payment();
+    $payment->booking_id = $booking->id;
+    $payment->user_id = Auth::id();
+    $payment->invoice_id = $invoice->id;
+    $payment->amount = $service->price;
+    $payment->payment_method = $validated['payment_method'];
+    $payment->transaction_id = 'TRANS-' . time() . '-' . $booking->id;
+    $payment->status = 'completed';
+    $payment->payment_date = now();
+    $payment->save();
+    
+    // Mark invoice as paid
+    $invoiceService->markInvoiceAsPaid($invoice, $payment);
+    
+    return $payment;
+}
 
     protected function updateAvailability($booking)
-    {
+{
+    // Always parse as H:i:s
+    $startTime = Carbon::parse($booking->start_time);
+    $endTime = Carbon::parse($booking->end_time);
+    $current = $startTime->copy();
+
+    while ($current < $endTime) {
+        $slotEnd = $current->copy()->addMinutes(15);
+
         Availability::where('instructor_id', $booking->instructor_id)
             ->where('date', $booking->date)
-            ->where('start_time', $booking->start_time)
+            ->whereTime('start_time', $current->format('H:i:s'))
             ->update(['is_available' => false]);
-    }
 
-    protected function sendBookingNotifications($booking)
-    {
-        // Add your notification logic here
-        // Example:
-        // Notification::send($booking->instructor->user, new NewBookingNotification($booking));
-        // Notification::send($booking->user, new BookingConfirmationNotification($booking));
+        $current = $slotEnd;
     }
+}
+
+    /**
+     * Send booking notifications to relevant parties
+     */
+    protected function sendBookingNotifications($booking)
+{
+    // Ensure booking is eager loaded with relationships
+    $booking = Booking::with(['user', 'instructor.user', 'service', 'suburb', 'payment'])
+        ->findOrFail($booking->id);
+        
+    // Send booking confirmation to student
+    try {
+        if ($booking->user) {
+            // Send both database and email notification
+            $booking->user->notify(new BookingConfirmation($booking));
+            
+            // Mark confirmation as sent in database
+            $booking->confirmation_sent = true;
+            $booking->save();
+            
+            Log::info('Booking confirmation notification (database + email) sent to user #' . $booking->user_id . ' for booking #' . $booking->id);
+        }
+    } catch (\Exception $e) {
+        Log::error('Failed to send booking confirmation: ' . $e->getMessage());
+    }
+    
+    // Send notification to instructor
+    try {
+        if ($booking->instructor && $booking->instructor->user) {
+            // Send both database and email notification
+            $booking->instructor->user->notify(new NewBookingReceived($booking));
+            Log::info('New booking notification (database + email) sent to instructor #' . $booking->instructor_id . ' for booking #' . $booking->id);
+        }
+    } catch (\Exception $e) {
+        Log::error('Failed to send instructor notification: ' . $e->getMessage());
+    }
+    
+    // Send notification to admin (optional)
+    try {
+        $adminUsers = \App\Models\User::where('role', 'admin')->get();
+        foreach ($adminUsers as $admin) {
+            $admin->notify(new \App\Notifications\NewBookingAdmin($booking));
+        }
+        Log::info('New booking notification sent to admins for booking #' . $booking->id);
+    } catch (\Exception $e) {
+        Log::error('Failed to send admin notification: ' . $e->getMessage());
+    }
+}
 }

@@ -7,15 +7,18 @@
             <div class="booking-card shadow-lg rounded-4 p-4 bg-white">
                 <!-- Steps Indicator -->
                 <div class="step-indicator mb-4">
+                    @php $stepIndex = 1; @endphp
                     <div class="step completed">
                         <div class="step-number">
                             <i class="fas fa-map-marker-alt"></i>
+                            <span class="step-count">{{ $stepIndex++ }}</span>
                         </div>
                         <div class="step-title">Suburb</div>
                     </div>
                     <div class="step active">
                         <div class="step-number">
                             <i class="fas fa-user-tie"></i>
+                            <span class="step-count">{{ $stepIndex++ }}</span>
                         </div>
                         <div class="step-title">Instructor</div>
                     </div>
@@ -23,6 +26,7 @@
                         <div class="step">
                             <div class="step-number">
                                 <i class="fas fa-{{ $icon }}"></i>
+                                <span class="step-count">{{ $stepIndex++ }}</span>
                             </div>
                             <div class="step-title">{{ ['Date & Time', 'Service', 'Details', 'Payment'][$index] }}</div>
                         </div>
@@ -130,7 +134,76 @@
     transition: all 0.3s ease;
 }
 
-/* Step Indicator Styles [Same as before] */
+/* Step Indicator Styles */
+.step-indicator {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background: var(--light);
+    border-radius: 1rem;
+}
+.step {
+    flex: 1;
+    text-align: center;
+    position: relative;
+    padding: 0.5rem 0;
+}
+.step-number {
+    width: 35px;
+    height: 35px;
+    border-radius: 50%;
+    background: #e9ecef;
+    color: var(--secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 0.5rem;
+    font-size: 0.9rem;
+    border: 2px solid transparent;
+    transition: all 0.3s ease;
+    position: relative;
+}
+.step-count {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background: var(--primary-light);
+    color: var(--primary);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    border: 2px solid var(--white);
+    z-index: 2;
+}
+.step.active .step-number,
+.step.completed .step-number {
+    background: var(--primary);
+    color: var(--white);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 4px var(--primary-light);
+}
+.step.active .step-count,
+.step.completed .step-count {
+    background: var(--primary);
+    color: var(--white);
+}
+.step-title {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--secondary);
+}
+.step.active .step-title,
+.step.completed .step-title {
+    color: var(--primary);
+    font-weight: 600;
+}
 
 .icon-circle {
     width: 80px;
@@ -145,7 +218,7 @@
     font-size: 2rem;
 }
 
-/* Updated Instructor Card Styles */
+/* Instructor Card Styles */
 .instructor-option {
     position: relative;
 }
@@ -163,13 +236,55 @@
     border-radius: 1rem;
     background: var(--light);
     cursor: pointer;
+    transition: border-color 0.3s, box-shadow 0.3s, background 0.3s;
+    position: relative;
+    box-shadow: 0 2px 8px rgba(13,110,253,0.04);
+}
+
+/* Visible custom radio button */
+.instructor-card::before {
+    content: '';
+    position: absolute;
+    top: 1.5rem;
+    right: 1.5rem;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    background: var(--white);
     transition: all 0.3s ease;
+    z-index: 1;
+}
+
+.instructor-radio:checked + .instructor-card::before {
+    border-color: var(--primary);
+    background: var(--primary);
+    box-shadow: 0 0 0 2px var(--primary-light);
+}
+
+.instructor-radio:checked + .instructor-card::after {
+    content: '';
+    position: absolute;
+    top: 2.05rem;
+    right: 2.05rem;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--white);
+    z-index: 2;
 }
 
 .instructor-radio:checked + .instructor-card {
     border-color: var(--primary);
+    border-width: 2px;
+    box-shadow: 0 0 0 4px var(--primary-light), 0 4px 16px rgba(13,110,253,0.15);
     background: var(--white);
-    box-shadow: 0 4px 12px rgba(13, 110, 253, 0.1);
+    z-index: 2;
+}
+
+.instructor-card:hover {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px var(--primary-light);
 }
 
 .instructor-header {
@@ -191,6 +306,14 @@
     justify-content: center;
     font-size: 1.5rem;
     font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 8px rgba(13,110,253,0.2);
+}
+
+.instructor-radio:checked + .instructor-card .instructor-avatar {
+    background: linear-gradient(135deg, var(--primary), #0a58ca);
+    transform: scale(1.05);
+    box-shadow: 0 6px 12px rgba(13,110,253,0.25);
 }
 
 .instructor-info {
@@ -202,7 +325,7 @@
     font-size: 1.1rem;
     font-weight: 600;
     margin-bottom: 0.5rem;
-    color: var(--gray-900);
+    color: var(--gray-900, #212529);
 }
 
 .rating {
@@ -219,6 +342,7 @@
     font-size: 0.9rem;
     color: var(--secondary);
     line-height: 1.5;
+    min-height: 4rem; /* Fixed height for bio section */
 }
 
 .instructor-bio p {
@@ -230,19 +354,28 @@
     top: 1rem;
     right: 1rem;
     color: var(--primary);
-    font-size: 0.9rem;
+    font-size: 1rem;
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    background-color: var(--primary-light);
+    padding: 0.35rem 0.75rem;
+    border-radius: 2rem;
     opacity: 0;
+    transform: scale(0.8);
     transition: all 0.3s ease;
+}
+
+.selection-indicator i {
+    color: var(--primary);
 }
 
 .instructor-radio:checked + .instructor-card .selection-indicator {
     opacity: 1;
+    transform: scale(1);
 }
 
-/* Updated Button Styles */
+/* Button Styles */
 .continue-btn {
     width: 100%;
     padding: 1rem 2rem;
@@ -290,6 +423,23 @@
     display: block;
 }
 
+.highlight {
+    color: var(--primary);
+    font-weight: 600;
+    position: relative;
+}
+
+.highlight::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: -2px;
+    width: 100%;
+    height: 2px;
+    background-color: var(--primary);
+    opacity: 0.3;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .booking-card {
@@ -306,10 +456,33 @@
         font-size: 1.25rem;
     }
     
+    .instructor-card::before {
+        top: 1rem;
+        right: 1rem;
+        width: 20px;
+        height: 20px;
+    }
+    
+    .instructor-radio:checked + .instructor-card::after {
+        top: 1.5rem;
+        right: 1.5rem;
+        width: 7px;
+        height: 7px;
+    }
+    
+    .selection-indicator {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.85rem;
+    }
+    
     .continue-btn,
     .btn-outline-primary {
         padding: 0.75rem 1.5rem;
         font-size: 1rem;
+    }
+    
+    .instructor-bio {
+        min-height: 3rem;
     }
 }
 
@@ -321,6 +494,7 @@
         --border: #404040;
         --secondary: #a0aec0;
         --gray-900: #ffffff;
+        --primary-light: rgba(13, 110, 253, 0.2);
     }
     
     .booking-card {
@@ -333,6 +507,20 @@
     
     .instructor-radio:checked + .instructor-card {
         background: var(--white);
+    }
+    
+    .instructor-card::before {
+        background: #333;
+        border-color: #555;
+    }
+    
+    .instructor-radio:checked + .instructor-card::before {
+        background: var(--primary);
+        border-color: var(--primary);
+    }
+    
+    .selection-indicator {
+        background-color: rgba(13, 110, 253, 0.25);
     }
 }
 </style>

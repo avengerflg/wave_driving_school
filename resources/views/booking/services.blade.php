@@ -1,34 +1,52 @@
 @extends('layouts.app')
 
 @section('content')
-<div class="container">
+<div class="container py-5">
     <div class="row justify-content-center">
         <div class="col-md-10">
             <div class="booking-steps">
                 <!-- Steps Indicator -->
-                <div class="step-indicator">
+                <div class="step-indicator mb-4">
                     <div class="step completed">
-                        <div class="step-number"><i class="fas fa-check"></i></div>
+                        <div class="step-number">
+                            <i class="fas fa-check"></i>
+                            <span class="step-count">1</span>
+                        </div>
                         <div class="step-title">Suburb</div>
                     </div>
                     <div class="step completed">
-                        <div class="step-number"><i class="fas fa-check"></i></div>
+                        <div class="step-number">
+                            <i class="fas fa-check"></i>
+                            <span class="step-count">2</span>
+                        </div>
                         <div class="step-title">Instructor</div>
                     </div>
                     <div class="step completed">
-                        <div class="step-number"><i class="fas fa-check"></i></div>
+                        <div class="step-number">
+                            <i class="fas fa-check"></i>
+                            <span class="step-count">3</span>
+                        </div>
                         <div class="step-title">Date & Time</div>
                     </div>
                     <div class="step active">
-                        <div class="step-number">4</div>
+                        <div class="step-number">
+                            4
+                            <span class="step-count">4</span>
+                        </div>
                         <div class="step-title">Service</div>
                     </div>
                     <div class="step">
-                        <div class="step-number">5</div>
+                        <div class="step-number">
+                            5
+                            <span class="step-count">5</span>
+                        </div>
                         <div class="step-title">Details</div>
                     </div>
                     <div class="step">
-                        <div class="step-number">6</div>
+                        <div class="step-number">
+                            6
+                            <span class="step-count">6</span>
+                        </div>
                         <div class="step-title">Payment</div>
                     </div>
                 </div>
@@ -131,6 +149,99 @@
 </div>
 
 <style>
+/* Step Indicator Styles */
+.step-indicator {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    position: relative;
+    padding: 0 1rem;
+}
+
+.step-indicator::before {
+    content: '';
+    position: absolute;
+    top: 20px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #e2e8f0;
+    z-index: 1;
+}
+
+.step {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    flex: 1;
+}
+
+.step-number {
+    width: 40px;
+    height: 40px;
+    background: white;
+    border: 2px solid #e2e8f0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 0.5rem;
+    font-weight: 600;
+    color: #64748b;
+    position: relative;
+}
+
+.step-count {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background: rgba(13, 110, 253, 0.1);
+    color: #0d6efd;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    border: 2px solid white;
+    z-index: 2;
+}
+
+.step.completed .step-number {
+    background: #0d6efd;
+    border-color: #0d6efd;
+    color: white;
+}
+
+.step.completed .step-count {
+    background: #0d6efd;
+    color: white;
+}
+
+.step.active .step-number {
+    border-color: #0d6efd;
+    color: #0d6efd;
+}
+
+.step.active .step-count {
+    background: #0d6efd;
+    color: white;
+}
+
+.step-title {
+    font-size: 0.875rem;
+    color: #64748b;
+}
+
+.step.active .step-title,
+.step.completed .step-title {
+    color: #0d6efd;
+    font-weight: 600;
+}
+
+/* Original styles unchanged below */
 .booking-content {
     max-width: 900px;
     margin: 0 auto;
@@ -310,6 +421,15 @@
 
     .back-btn, .continue-btn {
         width: 100%;
+    }
+    
+    .step-indicator {
+        overflow-x: auto;
+        padding-bottom: 1rem;
+    }
+    
+    .step {
+        min-width: 120px;
     }
 }
 </style>

@@ -44,11 +44,11 @@ class DashboardController extends Controller
         
         // Get monthly bookings for the current year
         $monthlyBookings = DB::table('bookings')
-            ->selectRaw('MONTH(date) as month, COUNT(*) as count')
-            ->whereYear('date', Carbon::now()->year)
-            ->groupBy('month')
-            ->orderBy('month')
-            ->get();
+        ->selectRaw("CAST(strftime('%m', date) AS INTEGER) as month, COUNT(*) as count")
+        ->whereRaw("strftime('%Y', date) = ?", [Carbon::now()->year])
+        ->groupBy('month')
+        ->orderBy('month')
+        ->get();
         
         // Format monthly bookings data for chart
         $monthlyBookingsData = array_fill(0, 12, 0);
@@ -58,12 +58,12 @@ class DashboardController extends Controller
         
         // Get monthly revenue for the current year
         $monthlyRevenueData = DB::table('payments')
-            ->selectRaw('MONTH(created_at) as month, SUM(amount) as total')
-            ->where('status', 'completed')
-            ->whereYear('created_at', Carbon::now()->year)
-            ->groupBy('month')
-            ->orderBy('month')
-            ->get();
+        ->selectRaw("CAST(strftime('%m', created_at) AS INTEGER) as month, SUM(amount) as total")
+        ->where('status', 'completed')
+        ->whereRaw("strftime('%Y', created_at) = ?", [Carbon::now()->year])
+        ->groupBy('month')
+        ->orderBy('month')
+        ->get();
         
         // Format monthly revenue data for chart
         $monthlyRevenueChartData = array_fill(0, 12, 0);
