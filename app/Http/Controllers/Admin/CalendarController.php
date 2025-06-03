@@ -754,119 +754,112 @@ public function debugInstructors(Request $request)
  * Check if instructor has enough consecutive availability slots for a booking
  */
     private function checkAvailabilityForBooking($instructorId, $date, $startTime, $serviceDurationMinutes)
-{
-    // Ensure serviceDurationMinutes is an integer
-    $serviceDurationMinutes = (int) $serviceDurationMinutes;
-    
-    $startDateTime = Carbon::parse($date . ' ' . $startTime);
-    $endDateTime = $startDateTime->copy()->addMinutes($serviceDurationMinutes);
-    
-    // Check for existing bookings that would conflict
-    $conflictingBookings = Booking::where('instructor_id', $instructorId)
-        ->whereDate('date', $date)
-        ->where('status', '!=', 'cancelled')
-        ->where(function($query) use ($startDateTime, $endDateTime) {
-            $query->where(function($q) use ($startDateTime, $endDateTime) {
-                // Handle both time-only and datetime formats in database
-                $q->whereRaw("DATE(date) = ? AND (
-                    (TIME(CASE WHEN start_time LIKE '%-%' THEN start_time ELSE CONCAT(DATE(date), ' ', start_time) END) < ? AND 
-                     TIME(CASE WHEN end_time LIKE '%-%' THEN end_time ELSE CONCAT(DATE(date), ' ', end_time) END) > ?) OR
-                    (TIME(CASE WHEN start_time LIKE '%-%' THEN start_time ELSE CONCAT(DATE(date), ' ', start_time) END) < ? AND 
-                     TIME(CASE WHEN end_time LIKE '%-%' THEN end_time ELSE CONCAT(DATE(date), ' ', end_time) END) > ?)
-                )", [
-                    $startDateTime->format('Y-m-d'),
-                    $endDateTime->format('H:i:s'),
-                    $startDateTime->format('H:i:s'),
-                    $startDateTime->format('H:i:s'),
-                    $endDateTime->format('H:i:s')
-                ]);
-            });
-        })
-        ->exists();
-    
-    if ($conflictingBookings) {
-        Log::info("Conflicting booking found for instructor {$instructorId} on {$date} from {$startTime}");
-        return false;
-    }
-    
-    // Get all availability slots for this instructor on this date that are available
-    $availabilitySlots = Availability::where('instructor_id', $instructorId)
-        ->whereDate('date', $date)
-        ->where('is_available', true)
-        ->orderBy('start_time')
-        ->get();
-    
-    if ($availabilitySlots->isEmpty()) {
-        Log::info("No availability slots found for instructor {$instructorId} on {$date}");
-        return false;
-    }
-    
-    // Check if we have continuous coverage for the entire booking duration
-    $currentTime = $startDateTime->copy();
-    $bookingEndTime = $endDateTime->copy();
-    
-    while ($currentTime->lt($bookingEndTime)) {
-        $found = false;
-        
-        foreach ($availabilitySlots as $slot) {
-            $slotStart = Carbon::parse($date . ' ' . $slot->start_time);
-            $slotEnd = Carbon::parse($date . ' ' . $slot->end_time);
-            
-            // Check if this slot covers the current time we need
-            if ($slotStart->lte($currentTime) && $slotEnd->gt($currentTime)) {
-                // Move to the end of this slot or to the end of our booking, whichever is sooner
-                $nextTime = $slotEnd->lt($bookingEndTime) ? $slotEnd : $bookingEndTime;
-                $currentTime = $nextTime;
-                $found = true;
-                break;
+        {
+            $serviceDurationMinutes = (int) $serviceDurationMinutes;
+            $bufferMinutes = 30; // 30 min rest after booking
+
+            $startDateTime = Carbon::parse($date . ' ' . $startTime);
+            $endDateTime = $startDateTime->copy()->addMinutes($serviceDurationMinutes + $bufferMinutes);
+
+            // Check for existing bookings that would conflict (including buffer)
+            $conflictingBookings = Booking::where('instructor_id', $instructorId)
+                ->whereDate('date', $date)
+                ->where('status', '!=', 'cancelled')
+                ->where(function($query) use ($startDateTime, $endDateTime) {
+                    $query->where(function($q) use ($startDateTime, $endDateTime) {
+                        $q->whereRaw("DATE(date) = ? AND (
+                            (TIME(CASE WHEN start_time LIKE '%-%' THEN start_time ELSE CONCAT(DATE(date), ' ', start_time) END) < ? AND 
+                            TIME(CASE WHEN end_time LIKE '%-%' THEN end_time ELSE CONCAT(DATE(date), ' ', end_time) END) > ?) OR
+                            (TIME(CASE WHEN start_time LIKE '%-%' THEN start_time ELSE CONCAT(DATE(date), ' ', start_time) END) < ? AND 
+                            TIME(CASE WHEN end_time LIKE '%-%' THEN end_time ELSE CONCAT(DATE(date), ' ', end_time) END) > ?)
+                        )", [
+                            $startDateTime->format('Y-m-d'),
+                            $endDateTime->format('H:i:s'),
+                            $startDateTime->format('H:i:s'),
+                            $startDateTime->format('H:i:s'),
+                            $endDateTime->format('H:i:s')
+                        ]);
+                    });
+                })
+                ->exists();
+
+            if ($conflictingBookings) {
+                Log::info("Conflicting booking found for instructor {$instructorId} on {$date} from {$startTime}");
+                return false;
             }
+
+            // Get all availability slots for this instructor on this date that are available
+            $availabilitySlots = Availability::where('instructor_id', $instructorId)
+                ->whereDate('date', $date)
+                ->where('is_available', true)
+                ->orderBy('start_time')
+                ->get();
+
+            if ($availabilitySlots->isEmpty()) {
+                Log::info("No availability slots found for instructor {$instructorId} on {$date}");
+                return false;
+            }
+
+            // Check if we have continuous coverage for the entire booking duration + buffer
+            $currentTime = $startDateTime->copy();
+            $bookingEndTime = $endDateTime->copy();
+
+            while ($currentTime->lt($bookingEndTime)) {
+                $found = false;
+
+                foreach ($availabilitySlots as $slot) {
+                    $slotStart = Carbon::parse($date . ' ' . $slot->start_time);
+                    $slotEnd = Carbon::parse($date . ' ' . $slot->end_time);
+
+                    if ($slotStart->lte($currentTime) && $slotEnd->gt($currentTime)) {
+                        $nextTime = $slotEnd->lt($bookingEndTime) ? $slotEnd : $bookingEndTime;
+                        $currentTime = $nextTime;
+                        $found = true;
+                        break;
+                    }
+                }
+
+                if (!$found) {
+                    Log::info("Gap found in availability at {$currentTime->format('H:i:s')} for instructor {$instructorId} on {$date}");
+                    return false;
+                }
+            }
+
+            Log::info("Sufficient availability (with buffer) found for instructor {$instructorId} on {$date} from {$startTime} for {$serviceDurationMinutes} + buffer");
+            return true;
         }
-        
-        if (!$found) {
-            Log::info("Gap found in availability at {$currentTime->format('H:i:s')} for instructor {$instructorId} on {$date}");
-            return false;
-        }
-    }
-    
-    Log::info("Sufficient availability found for instructor {$instructorId} on {$date} from {$startTime} for {$serviceDurationMinutes} minutes");
-    return true;
-}
 
 
 /**
  * Mark availability slots as booked (optional method)
  */
 private function markSlotsAsBooked($instructorId, $date, $startTime, $serviceDurationMinutes)
-{
-    // Ensure serviceDurationMinutes is an integer
-    $serviceDurationMinutes = (int) $serviceDurationMinutes;
-    
-    $startDateTime = Carbon::parse($date . ' ' . $startTime);
-    $endDateTime = $startDateTime->copy()->addMinutes($serviceDurationMinutes);
-    
-    // Update availability slots to mark them as not available
-    // Find all slots that overlap with the booking time
-    $affectedSlots = Availability::where('instructor_id', $instructorId)
-        ->whereDate('date', $date)
-        ->where(function($query) use ($startDateTime, $endDateTime) {
-            $query->where(function($q) use ($startDateTime, $endDateTime) {
-                // Slot starts within booking time
-                $q->where('start_time', '>=', $startDateTime->format('H:i:s'))
-                  ->where('start_time', '<', $endDateTime->format('H:i:s'));
-            })->orWhere(function($q) use ($startDateTime, $endDateTime) {
-                // Slot ends within booking time
-                $q->where('end_time', '>', $startDateTime->format('H:i:s'))
-                  ->where('end_time', '<=', $endDateTime->format('H:i:s'));
-            })->orWhere(function($q) use ($startDateTime, $endDateTime) {
-                // Slot completely contains booking time
-                $q->where('start_time', '<=', $startDateTime->format('H:i:s'))
-                  ->where('end_time', '>=', $endDateTime->format('H:i:s'));
-            });
-        })
-        ->update(['is_available' => false]);
-    
-    Log::info("Marked {$affectedSlots} availability slots as booked for instructor {$instructorId} on {$date} from {$startTime} for {$serviceDurationMinutes} minutes");
-}
+    {
+        $serviceDurationMinutes = (int) $serviceDurationMinutes;
+        $bufferMinutes = 30; // 30 min rest after booking
+
+        $startDateTime = Carbon::parse($date . ' ' . $startTime);
+        $endDateTime = $startDateTime->copy()->addMinutes($serviceDurationMinutes + $bufferMinutes);
+
+        // Update availability slots to mark them as not available (including buffer)
+        $affectedSlots = Availability::where('instructor_id', $instructorId)
+            ->whereDate('date', $date)
+            ->where(function($query) use ($startDateTime, $endDateTime) {
+                $query->where(function($q) use ($startDateTime, $endDateTime) {
+                    $q->where('start_time', '>=', $startDateTime->format('H:i:s'))
+                    ->where('start_time', '<', $endDateTime->format('H:i:s'));
+                })->orWhere(function($q) use ($startDateTime, $endDateTime) {
+                    $q->where('end_time', '>', $startDateTime->format('H:i:s'))
+                    ->where('end_time', '<=', $endDateTime->format('H:i:s'));
+                })->orWhere(function($q) use ($startDateTime, $endDateTime) {
+                    $q->where('start_time', '<=', $startDateTime->format('H:i:s'))
+                    ->where('end_time', '>=', $endDateTime->format('H:i:s'));
+                });
+            })
+            ->update(['is_available' => false]);
+
+        Log::info("Marked {$affectedSlots} availability slots as booked (with buffer) for instructor {$instructorId} on {$date} from {$startTime} for {$serviceDurationMinutes} + buffer");
+    }
 
     /**
  * Debug method to check availability - you can call this to see what's happening

@@ -64,22 +64,28 @@ class BookingController extends Controller
      * Store a newly created booking in storage.
      */
     public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'user_id' => 'required|exists:users,id',
-            'instructor_id' => 'required|exists:instructors,id',
-            'service_id' => 'required|exists:services,id',
-            'suburb_id' => 'required|exists:suburbs,id',
-            'date' => 'required|date',
-            'start_time' => 'required',
-            'end_time' => 'required',
-            'status' => 'required|in:pending,confirmed,completed,cancelled',
-        ]);
+        {
+            $validated = $request->validate([
+                'user_id' => 'required|exists:users,id',
+                'instructor_id' => 'required|exists:instructors,id',
+                'service_id' => 'required|exists:services,id',
+                'suburb_id' => 'required|exists:suburbs,id',
+                'date' => 'required|date',
+                'start_time' => 'required',
+                'end_time' => 'required',
+                'status' => 'required|in:pending,confirmed,completed,cancelled',
+            ]);
 
-        Booking::create($validated);
+            // Add 30 min buffer to end_time
+            $startDateTime = \Carbon\Carbon::parse($validated['date'] . ' ' . $validated['start_time']);
+            $endDateTime = \Carbon\Carbon::parse($validated['date'] . ' ' . $validated['end_time']);
+            $endDateTimeWithBuffer = $endDateTime->copy()->addMinutes(30);
+            $validated['end_time'] = $endDateTimeWithBuffer->format('H:i:s');
 
-        return redirect()->route('admin.bookings.index')->with('success', 'Booking created successfully.');
-    }
+            Booking::create($validated);
+
+            return redirect()->route('admin.bookings.index')->with('success', 'Booking created successfully.');
+        }
 
     /**
      * Display the specified booking.
@@ -110,24 +116,30 @@ class BookingController extends Controller
      * Update the specified booking in storage.
      */
     public function update(Request $request, $id)
-    {
-        $booking = Booking::findOrFail($id);
+        {
+            $booking = Booking::findOrFail($id);
 
-        $validated = $request->validate([
-            'user_id' => 'required|exists:users,id',
-            'instructor_id' => 'required|exists:instructors,id',
-            'service_id' => 'required|exists:services,id',
-            'suburb_id' => 'required|exists:suburbs,id',
-            'date' => 'required|date',
-            'start_time' => 'required',
-            'end_time' => 'required',
-            'status' => 'required|in:pending,confirmed,completed,cancelled',
-        ]);
+            $validated = $request->validate([
+                'user_id' => 'required|exists:users,id',
+                'instructor_id' => 'required|exists:instructors,id',
+                'service_id' => 'required|exists:services,id',
+                'suburb_id' => 'required|exists:suburbs,id',
+                'date' => 'required|date',
+                'start_time' => 'required',
+                'end_time' => 'required',
+                'status' => 'required|in:pending,confirmed,completed,cancelled',
+            ]);
 
-        $booking->update($validated);
+            // Add 30 min buffer to end_time
+            $startDateTime = \Carbon\Carbon::parse($validated['date'] . ' ' . $validated['start_time']);
+            $endDateTime = \Carbon\Carbon::parse($validated['date'] . ' ' . $validated['end_time']);
+            $endDateTimeWithBuffer = $endDateTime->copy()->addMinutes(30);
+            $validated['end_time'] = $endDateTimeWithBuffer->format('H:i:s');
 
-        return redirect()->route('admin.bookings.index')->with('success', 'Booking updated successfully.');
-    }
+            $booking->update($validated);
+
+            return redirect()->route('admin.bookings.index')->with('success', 'Booking updated successfully.');
+        }
 
     /**
      * Remove the specified booking from storage.
